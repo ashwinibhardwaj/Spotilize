@@ -1,2 +1,5 @@
 Flask
+spotipy
+scikit-learn
+python-dotenv
 gunicorn
