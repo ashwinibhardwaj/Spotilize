@@ -2,6 +2,7 @@ import os
 from flask import Flask, redirect, request, session, url_for, render_template, flash
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyOAuth
+from spotipy.exceptions import SpotifyException
 from sklearn.cluster import KMeans
 import numpy as np
 
@@ -11,7 +12,7 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "supersecretkey")
 # Spotify API scopes
 SCOPE = "user-library-read user-top-read playlist-modify-public playlist-modify-private"
 
-# Read Spotify API credentials from environment variables
+# Spotify credentials
 SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID")
 SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
 SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI")
@@ -21,19 +22,20 @@ sp_oauth = SpotifyOAuth(
     client_secret=SPOTIPY_CLIENT_SECRET,
     redirect_uri=SPOTIPY_REDIRECT_URI,
     scope=SCOPE,
-    cache_path=".spotifycache"  # this can remain but not mandatory if you use session
+    cache_path=".spotifycache"
 )
 
 def get_spotify_client():
     token_info = session.get("token_info")
     if not token_info:
         return None
-
-    # Refresh token if expired
     if sp_oauth.is_token_expired(token_info):
-        token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
-        session["token_info"] = token_info
-
+        try:
+            token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
+            session["token_info"] = token_info
+        except Exception as e:
+            print(f"[ERROR] Token refresh failed: {e}")
+            return None
     return Spotify(auth=token_info["access_token"])
 
 def fetch_liked_songs(sp):
@@ -64,17 +66,34 @@ def get_audio_features(sp, track_ids):
     features = []
     for i in range(0, len(track_ids), 100):
         batch = track_ids[i:i+100]
-        features.extend(sp.audio_features(batch))
+        try:
+            batch_features = sp.audio_features(batch)
+            features.extend(batch_features)
+        except SpotifyException as e:
+            print(f"[ERROR] SpotifyException when fetching features: {e}")
+            continue
+        except Exception as e:
+            print(f"[ERROR] Unexpected error in get_audio_features: {e}")
+            continue
     return features
 
 def cluster_and_create_playlists(sp, tracks, user_id, cluster_count=2):
     if not tracks:
         return None
 
-    track_ids = [t['track']['id'] if 'track' in t else t['id'] for t in tracks]
-    features = get_audio_features(sp, track_ids)
+    track_ids = []
+    for t in tracks:
+        if 'track' in t and t['track'] and t['track'].get('id'):
+            track_ids.append(t['track']['id'])
+        elif t.get('id'):
+            track_ids.append(t['id'])
 
+    features = get_audio_features(sp, track_ids)
     features = [f for f in features if f]
+
+    if not features:
+        print("[WARN] No valid audio features returned.")
+        return None
 
     X = np.array([[f['danceability'], f['energy'], f['valence'], f['tempo']] for f in features])
 
@@ -83,7 +102,8 @@ def cluster_and_create_playlists(sp, tracks, user_id, cluster_count=2):
 
     clustered_tracks = {i: [] for i in range(cluster_count)}
     for idx, label in enumerate(labels):
-        clustered_tracks[label].append(track_ids[idx])
+        if idx < len(track_ids):
+            clustered_tracks[label].append(track_ids[idx])
 
     created_playlists = []
     for cluster_label, track_list in clustered_tracks.items():
@@ -101,25 +121,25 @@ def index():
 @app.route("/login")
 def login():
     auth_url = sp_oauth.get_authorize_url()
-    print(f"Auth URL: {auth_url}")
     return redirect(auth_url)
 
 @app.route("/callback")
 def callback():
     code = request.args.get('code')
     error = request.args.get('error')
-
-    print(f"[DEBUG] Callback received. Code: {code}, Error: {error}")
-
     if error:
         flash(f"Spotify authorization failed: {error}", "danger")
         return redirect(url_for("index"))
 
     if code:
-        token_info = sp_oauth.get_access_token(code)
-        print(f"[DEBUG] Token info obtained: {token_info}")
-        session["token_info"] = token_info
-        return redirect(url_for("choose"))
+        try:
+            token_info = sp_oauth.get_access_token(code)
+            session["token_info"] = token_info
+            return redirect(url_for("choose"))
+        except Exception as e:
+            print(f"[ERROR] Failed to get token info: {e}")
+            flash("Authorization failed. Please try again.", "danger")
+            return redirect(url_for("index"))
 
     flash("Authorization code missing", "danger")
     return redirect(url_for("index"))
@@ -136,17 +156,25 @@ def choose():
         user_id = sp.current_user()["id"]
 
         tracks = []
-        if choice == "liked" or choice == "both":
+        if choice in ["liked", "both"]:
             tracks.extend(fetch_liked_songs(sp))
-        if choice == "top" or choice == "both":
+        if choice in ["top", "both"]:
             tracks.extend(fetch_top_songs(sp))
 
         if not tracks:
             flash("No songs found in the selected category.", "warning")
             return redirect(url_for("choose"))
 
-        playlists = cluster_and_create_playlists(sp, tracks, user_id)
-        flash(f"Created playlists: {', '.join(playlists)}", "success")
+        try:
+            playlists = cluster_and_create_playlists(sp, tracks, user_id)
+            if not playlists:
+                flash("Could not create playlists. No valid track features.", "danger")
+            else:
+                flash(f"Created playlists: {', '.join(playlists)}", "success")
+        except Exception as e:
+            print(f"[ERROR] Exception while clustering/creating playlists: {e}")
+            flash("An error occurred while processing your songs.", "danger")
+
         return redirect(url_for("index"))
 
     return render_template("choose.html")
