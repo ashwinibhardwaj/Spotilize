@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Spotify Clusterer</title>
+</head>
+<body>
+  <h1>Welcome to Spotify Clusterer</h1>
+  <a href="{{ url_for('login') }}">Login with Spotify</a>
+  <br><br>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, msg in messages %}
+        <div style="color: {% if category == 'success' %}green{% else %}red{% endif %};">
+          {{ msg }}
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+</body>
+</html>

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Choose Songs to Cluster</title>
+</head>
+<body>
+  <h2>Choose which songs to cluster:</h2>
+  <form method="post">
+    <input type="radio" id="liked" name="song_choice" value="liked" required>
+    <label for="liked">Liked Songs</label><br>
+
+    <input type="radio" id="top" name="song_choice" value="top">
+    <label for="top">Top Songs</label><br>
+
+    <input type="radio" id="both" name="song_choice" value="both">
+    <label for="both">Both Liked and Top Songs</label><br><br>
+
+    <button type="submit">Create Clustered Playlists</button>
+  </form>
+  <br>
+  <a href="{{ url_for('index') }}">Back to Home</a>
+</body>
+</html>
