@@ -21,15 +21,20 @@ sp_oauth = SpotifyOAuth(
     client_secret=SPOTIPY_CLIENT_SECRET,
     redirect_uri=SPOTIPY_REDIRECT_URI,
     scope=SCOPE,
-    cache_path=".spotifycache"
+    cache_path=".spotifycache"  # this can remain but not mandatory if you use session
 )
 
 def get_spotify_client():
-    token_info = sp_oauth.get_cached_token()
+    token_info = session.get("token_info")
     if not token_info:
         return None
-    access_token = token_info['access_token']
-    return Spotify(auth=access_token)
+
+    # Refresh token if expired
+    if sp_oauth.is_token_expired(token_info):
+        token_info = sp_oauth.refresh_access_token(token_info["refresh_token"])
+        session["token_info"] = token_info
+
+    return Spotify(auth=token_info["access_token"])
 
 def fetch_liked_songs(sp):
     results = []
@@ -57,7 +62,6 @@ def fetch_top_songs(sp):
 
 def get_audio_features(sp, track_ids):
     features = []
-    # Spotify API accepts max 100 IDs at once
     for i in range(0, len(track_ids), 100):
         batch = track_ids[i:i+100]
         features.extend(sp.audio_features(batch))
@@ -70,27 +74,21 @@ def cluster_and_create_playlists(sp, tracks, user_id, cluster_count=2):
     track_ids = [t['track']['id'] if 'track' in t else t['id'] for t in tracks]
     features = get_audio_features(sp, track_ids)
 
-    # Filter out None features (e.g., unavailable tracks)
     features = [f for f in features if f]
 
-    # Use selected audio features for clustering
     X = np.array([[f['danceability'], f['energy'], f['valence'], f['tempo']] for f in features])
 
-    # KMeans clustering
     kmeans = KMeans(n_clusters=cluster_count, random_state=42)
     labels = kmeans.fit_predict(X)
 
-    # Group tracks by cluster label
     clustered_tracks = {i: [] for i in range(cluster_count)}
     for idx, label in enumerate(labels):
         clustered_tracks[label].append(track_ids[idx])
 
-    # Create playlists and add tracks
     created_playlists = []
     for cluster_label, track_list in clustered_tracks.items():
         playlist_name = f"Cluster {cluster_label + 1} Playlist"
         playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False)
-        # Add tracks in batches of 100
         for i in range(0, len(track_list), 100):
             sp.playlist_add_items(playlist_id=playlist['id'], items=track_list[i:i+100])
         created_playlists.append(playlist_name)
@@ -109,13 +107,19 @@ def login():
 def callback():
     code = request.args.get('code')
     error = request.args.get('error')
+
+    print(f"[DEBUG] Callback received. Code: {code}, Error: {error}")
+
     if error:
         flash(f"Spotify authorization failed: {error}", "danger")
         return redirect(url_for("index"))
+
     if code:
         token_info = sp_oauth.get_access_token(code)
+        print(f"[DEBUG] Token info obtained: {token_info}")
         session["token_info"] = token_info
         return redirect(url_for("choose"))
+
     flash("Authorization code missing", "danger")
     return redirect(url_for("index"))
 
