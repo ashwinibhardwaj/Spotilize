@@ -65,53 +65,55 @@ def fetch_top_songs(sp):
 def get_audio_features(sp, track_ids):
     features = []
     for i in range(0, len(track_ids), 100):
-        batch = track_ids[i:i+100]
+        batch = [tid for tid in track_ids[i:i+100] if tid]
         try:
             batch_features = sp.audio_features(batch)
             features.extend(batch_features)
         except SpotifyException as e:
-            print(f"[ERROR] SpotifyException when fetching features: {e}")
+            print(f"[ERROR] SpotifyException in get_audio_features: {e}")
             continue
         except Exception as e:
             print(f"[ERROR] Unexpected error in get_audio_features: {e}")
             continue
-    return features
+    return [f for f in features if f]
 
 def cluster_and_create_playlists(sp, tracks, user_id, cluster_count=2):
     if not tracks:
         return None
 
+    # Extract track IDs safely
     track_ids = []
     for t in tracks:
-        if 'track' in t and t['track'] and t['track'].get('id'):
-            track_ids.append(t['track']['id'])
-        elif t.get('id'):
-            track_ids.append(t['id'])
+        track = t.get('track', t)  # If 'track' exists, use it; else it's already the track
+        if track and track.get('id'):
+            track_ids.append(track['id'])
+
+    track_ids = [tid for tid in track_ids if tid]  # Filter out None values
+    print(f"[INFO] Extracted {len(track_ids)} track IDs.")
 
     features = get_audio_features(sp, track_ids)
-    features = [f for f in features if f]
-
     if not features:
-        print("[WARN] No valid audio features returned.")
+        print("[WARN] No valid audio features found.")
         return None
 
     X = np.array([[f['danceability'], f['energy'], f['valence'], f['tempo']] for f in features])
-
     kmeans = KMeans(n_clusters=cluster_count, random_state=42)
     labels = kmeans.fit_predict(X)
 
     clustered_tracks = {i: [] for i in range(cluster_count)}
     for idx, label in enumerate(labels):
-        if idx < len(track_ids):
-            clustered_tracks[label].append(track_ids[idx])
+        clustered_tracks[label].append(track_ids[idx])
 
     created_playlists = []
     for cluster_label, track_list in clustered_tracks.items():
+        if not track_list:
+            continue
         playlist_name = f"Cluster {cluster_label + 1} Playlist"
         playlist = sp.user_playlist_create(user=user_id, name=playlist_name, public=False)
         for i in range(0, len(track_list), 100):
             sp.playlist_add_items(playlist_id=playlist['id'], items=track_list[i:i+100])
         created_playlists.append(playlist_name)
+
     return created_playlists
 
 @app.route("/")
@@ -153,6 +155,7 @@ def choose():
 
     if request.method == "POST":
         choice = request.form.get("song_choice")
+        cluster_count = int(request.form.get("cluster_count", 2))
         user_id = sp.current_user()["id"]
 
         tracks = []
@@ -166,7 +169,7 @@ def choose():
             return redirect(url_for("choose"))
 
         try:
-            playlists = cluster_and_create_playlists(sp, tracks, user_id)
+            playlists = cluster_and_create_playlists(sp, tracks, user_id, cluster_count)
             if not playlists:
                 flash("Could not create playlists. No valid track features.", "danger")
             else:
