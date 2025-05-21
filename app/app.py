@@ -75,6 +75,8 @@ def get_audio_features(sp, track_ids):
         except Exception as e:
             print(f"[ERROR] Unexpected error in get_audio_features: {e}")
             continue
+        for f in features:
+            print(f)
     return [f for f in features if f]
 
 def cluster_and_create_playlists(sp, tracks, user_id, cluster_count=2):
