@@ -84,9 +84,14 @@ def cluster_and_create_playlists(sp, tracks, user_id, cluster_count=2):
     # Extract track IDs safely
     track_ids = []
     for t in tracks:
-        track = t.get('track', t)  # If 'track' exists, use it; else it's already the track
-        if track and track.get('id'):
-            track_ids.append(track['id'])
+        if 'track' in t:
+            # From liked songs
+            if t['track'] and t['track']['id']:
+                track_ids.append(t['track']['id'])
+            else:
+                # From top tracks
+                if t.get('id'):
+                    track_ids.append(t['id'])
 
     track_ids = [tid for tid in track_ids if tid]  # Filter out None values
     print(f"[INFO] Extracted {len(track_ids)} track IDs.")
