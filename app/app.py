@@ -90,6 +90,9 @@ def cluster_and_create_playlists(sp, tracks, user_id, cluster_count=2):
 
     track_ids = [tid for tid in track_ids if tid]  # Filter out None values
     print(f"[INFO] Extracted {len(track_ids)} track IDs.")
+    if track_ids:
+        for tid in track_ids:
+            print(tid)
 
     features = get_audio_features(sp, track_ids)
     if not features:
